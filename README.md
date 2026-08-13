@@ -2,7 +2,7 @@
 #### 英文版-股東會年報(尚未適用永續揭露準則) (`download_shareholders_annual_reports.py`)
 - **Retrieve all listed companies**
 
-  Fetch all listed-company stock codes from [MOPS](https://mopsov.twse.com.tw/mops/web/t51sb01). The Industry field should be left blank to retrieve companies across all industries rather than the default Cement Industry.
+  Fetch all listed-company stock codes from [MOPS](https://mopsov.twse.com.tw/mops/web/t51sb01). Leave the Industry field blank to retrieve companies across all industries rather than the default Cement Industry, and save all retrieved stock codes to `company_list.txt`.
 - **Download annual reports**
 
   Download the English-version Shareholders' Annual Reports from [MOPS](https://mopsov.twse.com.tw/mops/web/t57sb01_q5) for the target years and save them to `./shareholders_annual_reports`.
