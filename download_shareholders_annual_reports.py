@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import random
 import requests
+import zipfile
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
@@ -16,6 +17,8 @@ def get_all_company_ids(driver, market_type='sii'):
         EC.presence_of_element_located((By.XPATH, "//select[@name='TYPEK']"))
     )
     Select(typek_dropdown).select_by_value(market_type)
+
+    time.sleep(2)
 
     # Locate the industry dropdown and select the first blank option to search all industires
     industry_dropdown = WebDriverWait(driver, 10).until(
@@ -130,44 +133,63 @@ for market in markets:
                         print(f"Already exists, skipping: {expected_filename}")
                         retry_download = False
                         break
+                    
+                    file_url = link.get_attribute('href')
 
-                    link.click()
-                
-                    # Switch to the newly opened popup window
-                    WebDriverWait(driver, 10).until(EC.number_of_windows_to_be(2))
-                    driver.switch_to.window(driver.window_handles[1])
+                    if file_url.startswith('javascript:'):
+                        print(f"Downloading: {expected_filename} (via form submission)...")
+                        dl_url = "https://doc.twse.com.tw/server-java/t57sb01"
+                        payload = {
+                            "step": "9",
+                            "kind": "F",
+                            "co_id": cid,
+                            "filename": expected_filename
+                        }
+                        res = requests.post(dl_url, data=payload, timeout=20)
+                    else:
+                        if not file_url.startswith('http'):
+                            file_url = "https://doc.twse.com.tw" + file_url
+                            
+                        print(f"Downloading: {expected_filename}...")
+                        res = requests.get(file_url, timeout=10)
+                        
+                    if res.status_code == 200:
 
-                    if "下載過量" in driver.page_source:
+                        if b"\xe4\xb8\x8b\xe8\xbc\x89\xe9\x81\x8e\xe9\x87\x8f" in res.content:
                             retry_count += 1
                             print(f"Rate limited [下載過量] for {cid} ({year}). Pausing for 60 seconds...")
                             time.sleep(60)
-                            driver.close()
-                            driver.switch_to.window(driver.window_handles[0])
                             continue
-                    
-                    # Wait for the actual PDF link to load
-                    pdf_element = WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.XPATH, "//a[contains(@href, '.pdf')]"))
-                    )
-                    
-                    pdf_url = pdf_element.get_attribute('href')
-                    pdf_name = pdf_element.text
-                    
-                    if not pdf_url.startswith('http'):
-                        pdf_url = "https://doc.twse.com.tw" + pdf_url
                         
-                    print(f"Downloading: {pdf_name}...")
-                    
-                    # Download the PDF directly via requests to bypass browser PDF viewer
-                    res = requests.get(pdf_url, timeout=10)
-                    if res.status_code == 200:
-                        with open(os.path.join(save_dir, pdf_name), 'wb') as f:
+                        with open(file_path, 'wb') as f:
                             f.write(res.content)
-                        print(f"  -> Saved successfully.")
-                    
-                    # Close the popup window and switch back to the main window
-                    driver.close()
-                    driver.switch_to.window(driver.window_handles[0])
+
+                        if expected_filename.lower().endswith('.zip'):
+                            print(f"  -> Handle .zip and rename .pdf inside it...")
+                            try:
+                                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                                    pdf_files = [name for name in zip_ref.namelist() if name.lower().endswith('.pdf')]
+                                    
+                                    if pdf_files:
+                                        pdf_data = zip_ref.read(pdf_files[0])
+                                        base_name = os.path.splitext(expected_filename)[0]
+                                        new_pdf_name = f"{base_name}.pdf"
+                                        new_pdf_path = os.path.join(save_dir, new_pdf_name)
+                                        
+                                        with open(new_pdf_path, 'wb') as f_out:
+                                            f_out.write(pdf_data)
+                                            
+                                        print(f"  -> Extracted and saved as: {new_pdf_name}")
+                                    else:
+                                        print(f"  -> WARNING: No PDF found inside {expected_filename}")
+
+                                os.remove(file_path)
+                                
+                            except zipfile.BadZipFile:
+                                print(f"  -> ERROR: Downloaded file is not a valid .zip file.")
+                                failed_downloads.append([cid, year, "BadZipFile"])
+                        else:
+                            print(f"  -> .pdf saved successfully.")
 
                     retry_download = False
 
