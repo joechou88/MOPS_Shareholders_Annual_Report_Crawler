@@ -104,6 +104,7 @@ for market in markets:
                 retry_download = True
                 retry_count = 0
                 max_retries = 3
+                limit_reason = None
 
                 while retry_download and retry_count < max_retries:
                     driver.get(url)
@@ -111,6 +112,7 @@ for market in markets:
 
                     if "查詢過量" in driver.page_source:
                         retry_count += 1
+                        limit_reason = "OutOfQueryLimit"
                         print(f"Rate limited [查詢過量] for {cid} ({year}). Pausing for 10 seconds...")
                         time.sleep(10)
                         continue
@@ -157,6 +159,7 @@ for market in markets:
 
                         if b"\xe4\xb8\x8b\xe8\xbc\x89\xe9\x81\x8e\xe9\x87\x8f" in res.content:
                             retry_count += 1
+                            limit_reason = "OutOfDownloadLimit"
                             print(f"Rate limited [下載過量] for {cid} ({year}). Pausing for 60 seconds...")
                             time.sleep(60)
                             continue
@@ -191,14 +194,19 @@ for market in markets:
                         else:
                             print(f"  -> .pdf saved successfully.")
 
+                    else:
+                        print(f"  -> HTTP Error: {res.status_code}")
+                        failed_downloads.append([cid, year, f"HTTP_{res.status_code}"])
+
                     retry_download = False
 
                 if retry_count >= max_retries:
-                    raise Exception("MaxRetriesExceeded")
+                    raise Exception(limit_reason)
 
             except Exception as e:
-                print(f"Skipped: Company {cid}, Year {year} (Error: {type(e).__name__})")            
-                failed_downloads.append([cid, year, type(e).__name__])
+                err_reason = str(e) if str(e) in ["OutOfQueryLimit", "OutOfDownloadLimit"] else type(e).__name__
+                print(f"Skipped: Company {cid}, Year {year} (Error: {err_reason})")            
+                failed_downloads.append([cid, year, err_reason])
 
                 if driver is not None:
                     try:
