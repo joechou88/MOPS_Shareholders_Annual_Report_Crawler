@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import random
 import requests
+import re
 import zipfile
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -148,6 +149,17 @@ for market in markets:
                             "filename": expected_filename
                         }
                         res = requests.post(dl_url, data=payload, timeout=20)
+
+                        if b"<html" in res.content[:500].lower():
+                            matches = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', res.text, re.IGNORECASE)
+                            real_path = next((m for m in matches if any(ext in m.lower() for ext in ['.pdf', '.zip', '.doc', '.docx'])), None)
+                            
+                            if real_path:
+                                real_url = "https://doc.twse.com.tw" + real_path if not real_path.startswith('http') else real_path
+                                res = requests.get(real_url, timeout=30) 
+                            else:
+                                raise Exception("MissingFileOnServer")
+
                     else:
                         if not file_url.startswith('http'):
                             file_url = "https://doc.twse.com.tw" + file_url
@@ -201,10 +213,11 @@ for market in markets:
                     retry_download = False
 
                 if retry_count >= max_retries:
-                    raise Exception(limit_reason)
+                    raise Exception(limit_reason or "MaxRetriesExceeded")
 
             except Exception as e:
-                err_reason = str(e) if str(e) in ["OutOfQueryLimit", "OutOfDownloadLimit"] else type(e).__name__
+                custom_errors = ["OutOfQueryLimit", "OutOfDownloadLimit", "MissingFileOnServer", "MaxRetriesExceeded"]
+                err_reason = str(e) if str(e) in custom_errors else type(e).__name__
                 print(f"Skipped: Company {cid}, Year {year} (Error: {err_reason})")            
                 failed_downloads.append([cid, year, err_reason])
 

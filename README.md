@@ -1,5 +1,5 @@
 ## Python Scripts
-#### 英文版-股東會年報(尚未適用永續揭露準則) (`download_shareholders_annual_reports.py`)
+#### 英文版-股東會年報 (`download_shareholders_annual_reports.py`)
 - **Retrieve all listed companies**
 
   Fetch all listed-company stock codes from [MOPS](https://mopsov.twse.com.tw/mops/web/t51sb01) for both the SII (上市) and OTC (上櫃). The Industry field is left blank to retrieve companies across all industries rather than the default Cement Industry, and the retrieved stock codes are saved to market-specific text files (`company_list_sii.txt` and `company_list_otc.txt`).
