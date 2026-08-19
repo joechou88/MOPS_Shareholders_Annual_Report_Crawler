@@ -77,21 +77,35 @@ years = [112, 113, 114, 115]
 markets = ['otc']
 # ----------------
 
+retry_mode = input("Retry failed companies only (excluding 'NoReportFound')? (y/n): ").strip().lower() == 'y'
+
 for market in markets:
     save_dir = f"shareholders_annual_reports_{market}"
     list_file = f"company_list_{market}.txt"
     failed_file = f"failed_downloads_{market}.xlsx"
 
     os.makedirs(save_dir, exist_ok=True)
+    skipped_records_df = pd.DataFrame()
 
-    print(f"\n[{market.upper()}] Fetching company list...")
-    driver = setup_driver()
-    companies = get_all_company_ids(driver, market)
-    
-    with open(list_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(companies))
-    print(f"[{market.upper()}] Company list saved to {list_file}")
-    driver.quit()
+    if retry_mode and os.path.exists(failed_file):
+        print(f"\n[{market.upper()}] Loading target (company, year) pairs from {failed_file}...")
+        df = pd.read_excel(failed_file)
+        skipped_records_df = df[df['error_reason'] == 'NoReportFound']
+        df = df[df['error_reason'] != 'NoReportFound']
+        df['company_id'] = df['company_id'].astype(str)
+        target_tasks = df.groupby('company_id')['year'].apply(list).to_dict()
+        companies = list(target_tasks.keys())
+    else: 
+        print(f"\n[{market.upper()}] Fetching company list...")
+        driver = setup_driver()
+        companies = get_all_company_ids(driver, market)
+
+        target_tasks = {cid: years for cid in companies}
+
+        with open(list_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(companies))
+        print(f"[{market.upper()}] Company list saved to {list_file}")
+        driver.quit()
 
     print(f"[{market.upper()}] Starting download process...")
     failed_downloads = []
@@ -102,7 +116,7 @@ for market in markets:
     driver = None  # The browser is only launched when there are missing files to download.
 
     for cid in companies:
-        for year in years:
+        for year in target_tasks[cid]:
             pattern = f"{year+1910}_{cid}"
             already_downloaded = any(pattern in f for f in existing_files)
             
@@ -110,34 +124,33 @@ for market in markets:
                 print(f"Already exists locally, skipping request: {cid} ({year})")
                 continue
 
-            if driver is None:
-                driver = setup_driver()
-                req_session = setup_session()
-
             # Navigate directly to the target list page
             url = f"https://doc.twse.com.tw/server-java/t57sb01?co_id={cid}&year={year}&colorchg=1&step=1&mtype=F"
 
-            try:
-                retry_download = True
-                retry_count = 0
-                max_retries = 3
-                limit_reason = None
+            retry_download = True
+            retry_count = 0
+            max_retries = 3
+            last_error = None
 
-                while retry_download and retry_count < max_retries:
+            while retry_download and retry_count < max_retries:
+                if driver is None:
+                    driver = setup_driver()
+                    req_session = setup_session()
+
+                try:
                     driver.get(url)
                     page_src = driver.page_source
 
                     if "查詢過量" in driver.page_source:
                         retry_count += 1
-                        limit_reason = "OutOfQueryLimit"
+                        last_error = "OutOfQueryLimit"
                         print(f"Rate limited [查詢過量] for {cid} ({year}). Pausing for 10 seconds...")
                         time.sleep(10)
                         continue
 
                     if "英文版-股東會年報" not in driver.page_source:
+                        last_error = "NoReportFound"
                         print(f"Target report not found for {cid} ({year}), logging and skipping.")
-                        failed_downloads.append([cid, year, "NoReportFound"])
-                        retry_download = False
                         break
 
                     # Locate the row containing "英文版-股東會年報" (English Annual Report) and click the <a> tag
@@ -159,6 +172,7 @@ for market in markets:
                         print(f"Downloading: {expected_filename} (via form submission)...")
                         dl_url = "https://doc.twse.com.tw/server-java/t57sb01"
                         payload = {
+                            "colorchg": "1",
                             "step": "9",
                             "kind": "F",
                             "co_id": cid,
@@ -224,53 +238,66 @@ for market in markets:
                                             
                                         print(f"  -> Extracted and saved as: {new_file_name}")
                                     else:
-                                        print(f"  -> WARNING: No PDF/Word doc found inside {expected_filename}")
-                                        failed_downloads.append([cid, year, "NoValidFileInZip"])
+                                        print(f"  -> No valid PDF/Word file found inside {expected_filename}")
+                                        os.remove(file_path)
+                                        break
 
                                 os.remove(file_path)
                                 
                             except zipfile.BadZipFile:
-                                print(f"  -> ERROR: Downloaded file is not a valid .zip file.")
-                                failed_downloads.append([cid, year, "BadZipFile"])
-                                if os.path.exists(file_path):
-                                    os.remove(file_path)
-                        else:
-                            print(f"  -> .pdf saved successfully.")
+                                last_error = "BadZipFile"
+                                print(f"  -> Downloaded file is not a valid .zip file.")
+                                if os.path.exists(file_path): os.remove(file_path)
+                                break
+
+                        retry_download = False
+                        print(f"  -> .pdf saved successfully.")
 
                     else:
-                        print(f"  -> HTTP Error: {res.status_code}")
-                        failed_downloads.append([cid, year, f"HTTP_{res.status_code}"])
+                        raise Exception(f"HTTP_{res.status_code}")
 
-                    retry_download = False
+                except Exception as e:
+                    custom_errors = ["OutOfQueryLimit", "OutOfDownloadLimit", "DownloadLinkNotFound", "MaxRetriesExceeded"]
+                    err_reason = str(e) if str(e) in custom_errors else type(e).__name__
+                    last_error = err_reason
+                    retry_count += 1
+                    
+                    print(f"Error for {cid} ({year}): {err_reason}. Resetting and retrying ({retry_count}/{max_retries})...")
 
-                if retry_count >= max_retries:
-                    raise Exception(limit_reason or "MaxRetriesExceeded")
+                    if driver is not None:
+                        try: driver.quit()
+                        except: pass
+                        driver = None
+                        req_session = None
 
-            except Exception as e:
-                custom_errors = ["OutOfQueryLimit", "OutOfDownloadLimit", "DownloadLinkNotFound", "MaxRetriesExceeded"]
-                err_reason = str(e) if str(e) in custom_errors else type(e).__name__
-                print(f"Skipped: Company {cid}, Year {year} (Error: {err_reason})")            
-                failed_downloads.append([cid, year, err_reason])
+                    print(f"Unexpected error occurred for {cid} ({year}). Pausing for 5 seconds...")
+                    time.sleep(5)
 
+            if retry_download:
+                err_reason = last_error or "MaxRetriesExceeded"
+                print(f"Skipped: Company {cid}, Year {year} (Final Error: {err_reason})")
+                
+                # Check if it wasn't already logged by the Zip exceptions
+                if not any(f[0] == cid and f[1] == year for f in failed_downloads):
+                    failed_downloads.append([cid, year, err_reason])
+                
                 if driver is not None:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
+                    try: driver.quit()
+                    except: pass
                     driver = None
                     req_session = None
-
-                print(f"Unexpected error occurred for {cid} ({year}). Pausing for 5 seconds...")
-                time.sleep(5)
                     
             time.sleep(random.uniform(5, 10)) # Delay to prevent server overload
 
     if driver is not None:
         driver.quit()
 
-    if failed_downloads:
-        df = pd.DataFrame(failed_downloads, columns=["company_id", "year", "error_reason"])
-        df.to_excel(failed_file, index=False)        
+    final_failures_df = pd.DataFrame(failed_downloads, columns=["company_id", "year", "error_reason"])
+    if not skipped_records_df.empty:
+        final_failures_df = pd.concat([skipped_records_df, final_failures_df], ignore_index=True)
+
+    if not final_failures_df.empty:
+        final_failures_df.to_excel(failed_file, index=False)        
         print(f"[{market.upper()}] Failed downloads exported to '{failed_file}' for future retry.")
 
     print(f"[{market.upper()}] All downloads completed.")
