@@ -50,6 +50,10 @@ def setup_driver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--no-sandbox")
 
+    # Stop waiting for images and external scripts to load
+    options.page_load_strategy = 'eager'
+    options.add_argument("--blink-settings=imagesEnabled=false")
+
     # Anti-bot detection flags
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -57,9 +61,20 @@ def setup_driver():
 
     return webdriver.Chrome(options=options)
 
+def setup_session():
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "Referer": "https://doc.twse.com.tw/server-java/t57sb01",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+    })
+    return s
+
 # --- Settings ---
 years = [112, 113, 114, 115]
-markets = ['sii', 'otc']
+# markets = ['sii', 'otc']
+markets = ['otc']
 # ----------------
 
 for market in markets:
@@ -97,6 +112,7 @@ for market in markets:
 
             if driver is None:
                 driver = setup_driver()
+                req_session = setup_session()
 
             # Navigate directly to the target list page
             url = f"https://doc.twse.com.tw/server-java/t57sb01?co_id={cid}&year={year}&colorchg=1&step=1&mtype=F"
@@ -146,9 +162,15 @@ for market in markets:
                             "step": "9",
                             "kind": "F",
                             "co_id": cid,
-                            "filename": expected_filename
+                            "filename": expected_filename,
+                            "DEBUG": "",
+                            "SKEY1": "",
+                            "SKEY2": "",
+                            "YEAR": "",
+                            "MDATE": "",
+                            "TYPE": ""
                         }
-                        res = requests.post(dl_url, data=payload, timeout=20)
+                        res = req_session.post(dl_url, data=payload, timeout=20)
 
                         if b"<html" in res.content[:500].lower():
                             matches = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', res.text, re.IGNORECASE)
@@ -156,16 +178,16 @@ for market in markets:
                             
                             if real_path:
                                 real_url = "https://doc.twse.com.tw" + real_path if not real_path.startswith('http') else real_path
-                                res = requests.get(real_url, timeout=30) 
+                                res = req_session.get(real_url, timeout=30) 
                             else:
-                                raise Exception("MissingFileOnServer")
+                                raise Exception("DownloadLinkNotFound")
 
                     else:
                         if not file_url.startswith('http'):
                             file_url = "https://doc.twse.com.tw" + file_url
                             
                         print(f"Downloading: {expected_filename}...")
-                        res = requests.get(file_url, timeout=10)
+                        res = req_session.get(file_url, timeout=20)
                         
                     if res.status_code == 200:
 
@@ -183,26 +205,35 @@ for market in markets:
                             print(f"  -> Handle .zip and rename .pdf inside it...")
                             try:
                                 with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                                    pdf_files = [name for name in zip_ref.namelist() if name.lower().endswith('.pdf')]
+                                    target_files = [
+                                        name for name in zip_ref.namelist() 
+                                        if name.lower().endswith(('.pdf', '.docx', '.doc'))
+                                    ]
                                     
-                                    if pdf_files:
-                                        pdf_data = zip_ref.read(pdf_files[0])
-                                        base_name = os.path.splitext(expected_filename)[0]
-                                        new_pdf_name = f"{base_name}.pdf"
-                                        new_pdf_path = os.path.join(save_dir, new_pdf_name)
+                                    if target_files:
+                                        target_filename = target_files[0]
+                                        file_data = zip_ref.read(target_filename)
                                         
-                                        with open(new_pdf_path, 'wb') as f_out:
-                                            f_out.write(pdf_data)
+                                        base_name = os.path.splitext(expected_filename)[0]
+                                        ext = os.path.splitext(target_filename)[1] 
+                                        new_file_name = f"{base_name}{ext}"
+                                        new_file_path = os.path.join(save_dir, new_file_name)
+                                        
+                                        with open(new_file_path, 'wb') as f_out:
+                                            f_out.write(file_data)
                                             
-                                        print(f"  -> Extracted and saved as: {new_pdf_name}")
+                                        print(f"  -> Extracted and saved as: {new_file_name}")
                                     else:
-                                        print(f"  -> WARNING: No PDF found inside {expected_filename}")
+                                        print(f"  -> WARNING: No PDF/Word doc found inside {expected_filename}")
+                                        failed_downloads.append([cid, year, "NoValidFileInZip"])
 
                                 os.remove(file_path)
                                 
                             except zipfile.BadZipFile:
                                 print(f"  -> ERROR: Downloaded file is not a valid .zip file.")
                                 failed_downloads.append([cid, year, "BadZipFile"])
+                                if os.path.exists(file_path):
+                                    os.remove(file_path)
                         else:
                             print(f"  -> .pdf saved successfully.")
 
@@ -216,7 +247,7 @@ for market in markets:
                     raise Exception(limit_reason or "MaxRetriesExceeded")
 
             except Exception as e:
-                custom_errors = ["OutOfQueryLimit", "OutOfDownloadLimit", "MissingFileOnServer", "MaxRetriesExceeded"]
+                custom_errors = ["OutOfQueryLimit", "OutOfDownloadLimit", "DownloadLinkNotFound", "MaxRetriesExceeded"]
                 err_reason = str(e) if str(e) in custom_errors else type(e).__name__
                 print(f"Skipped: Company {cid}, Year {year} (Error: {err_reason})")            
                 failed_downloads.append([cid, year, err_reason])
@@ -227,9 +258,10 @@ for market in markets:
                     except:
                         pass
                     driver = None
+                    req_session = None
 
-                print(f"Unexpected error occurred for {cid} ({year}). Pausing for 30 seconds...")
-                time.sleep(30)
+                print(f"Unexpected error occurred for {cid} ({year}). Pausing for 5 seconds...")
+                time.sleep(5)
                     
             time.sleep(random.uniform(5, 10)) # Delay to prevent server overload
 
