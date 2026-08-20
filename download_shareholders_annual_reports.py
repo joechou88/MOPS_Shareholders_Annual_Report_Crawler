@@ -73,8 +73,7 @@ def setup_session():
 
 # --- Settings ---
 years = [112, 113, 114, 115]
-# markets = ['sii', 'otc']
-markets = ['otc']
+markets = ['sii', 'otc']
 # ----------------
 
 retry_mode = input("Retry failed companies only (excluding 'NoReportFound')? (y/n): ").strip().lower() == 'y'
