@@ -30,7 +30,7 @@ When a file fails to download, the script records a specific error code in the `
 | :--- | :--- | :--- |
 | `NoReportFound` | The company has not uploaded the target report for the specified year. | The script safely skips this without retrying and retains the record to avoid redundant checks in future runs. |
 | `OutOfQueryLimit` / `OutOfDownloadLimit` | The IP was temporarily throttled by the MOPS server. | The script pauses automatically (10s for query limit, 60s for download limit) and then retries up to 3 times per file. |
-| `DownloadLinkNotFound` | The script submitted the request form but couldn't locate a valid `.pdf`, `.zip`, or `.docx` URL in the server's response (possible malformed page). | The script sleeps for 5 seconds, resets the browser, and retries up to 3 times per file. |
+| `DownloadLinkNotFound` | The script submitted the request form but couldn't locate a valid .doc, .docx, .pdf, or `.zip` URL in the server's response (possible malformed page). | The script sleeps for 5 seconds, resets the browser, and retries up to 3 times per file. |
 | `WebDriverException` | Chrome crashed (often due to out-of-memory issues over time) or was manually closed by the user. | The script sleeps for 5 seconds, automatically respawns a fresh Chrome driver, and retries up to 3 times per file. |
 | `BadZipFile` / `NoValidFileInZip` | The downloaded ZIP file was corrupt, or it contained no recognizable document formats. | The script deletes the corrupted file and skips to the next company without retrying. |
 | `HTTP_xxx` (e.g., `HTTP_404`, `HTTP_500`) | Standard HTTP connection error or server-side crash. | The script sleeps for 5 seconds, resets the session, and retries up to 3 times per file. |
