@@ -238,6 +238,7 @@ for market in markets:
                                             
                                         print(f"  -> Extracted and saved as: {new_file_name}")
                                     else:
+                                        last_error = "NoValidFileInZip"
                                         print(f"  -> No valid PDF/Word file found inside {expected_filename}")
                                         os.remove(file_path)
                                         break
