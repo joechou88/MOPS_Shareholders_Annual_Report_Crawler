@@ -26,7 +26,7 @@
 
 When a file fails to download, the script records a specific error code in the `failed_downloads_<market>.xlsx` file. Here is what each error means and how the script handles it:
 
-| Error Reason | Description | Script Behavior & Solution |
+| Error | Description | Script Behavior |
 | :--- | :--- | :--- |
 | `NoReportFound` | The company has not uploaded the target report for the specified year. | The script safely skips this without retrying and retains the record to avoid redundant checks in future runs. |
 | `OutOfQueryLimit` / `OutOfDownloadLimit` | The IP was temporarily throttled by the MOPS server. | The script pauses automatically (10s for query limit, 60s for download limit) and then retries up to 3 times per file. |
